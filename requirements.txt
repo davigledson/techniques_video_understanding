@@ -1,5 +1,0 @@
-mediapipe==0.10.21
-cv2
-numpy
-PIL
-tkinter

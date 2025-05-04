@@ -4,20 +4,29 @@ import mediapipe as mp
 from tkinter import *
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
+import logging
+
+# Configuração para suprimir warnings
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
+mp_logger = logging.getLogger('mediapipe')
+mp_logger.setLevel(logging.ERROR)
 
 
 class MotionAppLive:
     def __init__(self, master):
         self.master = master
         master.title("Detecção ao Vivo - Webcam com MediaPipe")
-        master.geometry("1200x800")
+        master.geometry("1400x800")
+
+        # Variável para controlar o fechamento
+        self.is_closing = False
 
         # Configuração do tema
         self.style = ttk.Style()
         self.style.configure('TButton', font=('Arial', 10))
         self.style.configure('TCombobox', font=('Arial', 10))
 
-        # Canvases (original e processado)
+        # Canvases
         self.canvas_orig = Canvas(master, width=640, height=480, bg='black')
         self.canvas_tech = Canvas(master, width=640, height=480, bg='black')
         self.canvas_orig.grid(row=0, column=0, padx=10, pady=10)
@@ -27,7 +36,21 @@ class MotionAppLive:
         self.control_frame = Frame(master)
         self.control_frame.grid(row=1, column=0, columnspan=2, pady=10)
 
-        # Dropdown de detecções
+        # Dropdown de câmeras
+        self.camera_var = StringVar()
+        self.camera_options = self.get_available_cameras()
+        ttk.Label(self.control_frame, text="Câmera:").pack(side=LEFT, padx=5)
+        self.camera_dropdown = ttk.Combobox(
+            self.control_frame,
+            textvariable=self.camera_var,
+            values=self.camera_options,
+            state="readonly",
+            width=15
+        )
+        self.camera_dropdown.pack(side=LEFT, padx=5)
+        self.camera_dropdown.current(0 if self.camera_options else -1)
+
+        # Dropdown de técnicas
         self.techniques = [
             "Hands - Detecção de Mãos",
             "Face Mesh - Malha Facial",
@@ -36,17 +59,18 @@ class MotionAppLive:
             "Selfie Segmentation - Segmentação",
             "Objectron - Detecção de Objetos"
         ]
-        self.var_tech = StringVar(master)
+        self.var_tech = StringVar()
         self.var_tech.set(self.techniques[0])
 
+        ttk.Label(self.control_frame, text="Técnica:").pack(side=LEFT, padx=5)
         self.tech_dropdown = ttk.Combobox(
             self.control_frame,
             textvariable=self.var_tech,
             values=self.techniques,
             state="readonly",
-            width=30
+            width=25
         )
-        self.tech_dropdown.pack(side=LEFT, padx=10)
+        self.tech_dropdown.pack(side=LEFT, padx=5)
 
         # Botões
         self.start_btn = ttk.Button(
@@ -64,6 +88,13 @@ class MotionAppLive:
         )
         self.stop_btn.pack(side=LEFT, padx=5)
 
+        self.refresh_btn = ttk.Button(
+            self.control_frame,
+            text="Atualizar Câmeras",
+            command=self.refresh_cameras
+        )
+        self.refresh_btn.pack(side=LEFT, padx=5)
+
         # Estado
         self.cap = None
         self.running = False
@@ -72,15 +103,37 @@ class MotionAppLive:
         self.start_time = 0
 
         # Inicializa MediaPipe
-        self.mp = mp  # Mantém referência ao módulo mediapipe
+        self.mp = mp
         self.initialize_mediapipe()
 
+        # Configura o handler para fechamento
+        master.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def get_available_cameras(self, max_test=5):
+        """Detecta câmeras disponíveis"""
+        cameras = []
+        for i in range(max_test):
+            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                cameras.append(f"Câmera {i}")
+                cap.release()
+        return cameras if cameras else ["Câmera 0"]
+
+    def refresh_cameras(self):
+        """Atualiza a lista de câmeras"""
+        current_selection = self.camera_var.get()
+        self.camera_options = self.get_available_cameras()
+        self.camera_dropdown['values'] = self.camera_options
+        if current_selection in self.camera_options:
+            self.camera_dropdown.set(current_selection)
+        else:
+            self.camera_dropdown.current(0 if self.camera_options else -1)
+
     def initialize_mediapipe(self):
-        """Inicializa todos os módulos do MediaPipe"""
+        """Inicializa os modelos do MediaPipe"""
         self.mp_draw = self.mp.solutions.drawing_utils
         self.mp_drawing_styles = self.mp.solutions.drawing_styles
 
-        # Configurações dos modelos
         self.hands = self.mp.solutions.hands.Hands(
             max_num_hands=2,
             min_detection_confidence=0.7,
@@ -118,21 +171,36 @@ class MotionAppLive:
         )
 
     def start_webcam(self):
-        """Inicia a captura da webcam"""
-        if self.cap:
+        """Inicia a câmera selecionada"""
+        if self.cap or self.is_closing:
             return
 
-        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        if not self.cap.isOpened():
-            messagebox.showerror("Erro", "Webcam não acessível")
-            self.cap = None
-        else:
+        try:
+            camera_index = int(self.camera_var.get().split()[-1])
+            self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+
+            if not self.cap.isOpened():
+                messagebox.showerror("Erro", f"Câmera {camera_index} não acessível")
+                self.cap = None
+                return
+
+            # Configurações recomendadas
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FPS, 30)
+
             self.running = True
             self.start_btn.config(state=DISABLED)
             self.stop_btn.config(state=NORMAL)
             self.frame_count = 0
             self.start_time = cv2.getTickCount()
             self.update_frame()
+
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao iniciar câmera: {str(e)}")
+            if self.cap:
+                self.cap.release()
+                self.cap = None
 
     def stop_webcam(self):
         """Para a captura da webcam"""
@@ -141,48 +209,45 @@ class MotionAppLive:
             self.cap.release()
             self.cap = None
 
-        # Verifica se os widgets ainda existem antes de acessá-los
-        if hasattr(self, 'start_btn') and self.start_btn.winfo_exists():
+        if not self.is_closing:
             self.start_btn.config(state=NORMAL)
-        if hasattr(self, 'stop_btn') and self.stop_btn.winfo_exists():
             self.stop_btn.config(state=DISABLED)
 
     def update_frame(self):
-        """Atualiza o frame da webcam e aplica a detecção selecionada"""
-        if not self.running or not self.cap:
+        """Atualiza o frame da webcam"""
+        if not self.running or self.is_closing or not self.cap:
             return
 
-        # Captura do frame
-        ret, frame = self.cap.read()
-        if not ret:
+        try:
+            ret, frame = self.cap.read()
+            if not ret:
+                self.master.after(30, self.update_frame)
+                return
+
+            frame = cv2.flip(frame, 1)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            tech = self.var_tech.get().split(" - ")[0]
+
+            # Cálculo do FPS
+            self.frame_count += 1
+            if self.frame_count % 30 == 0:
+                end_time = cv2.getTickCount()
+                self.fps = 30 / ((end_time - self.start_time) / cv2.getTickFrequency())
+                self.start_time = end_time
+
+            # Exibe frames
+            self._show(self.canvas_orig, frame, f"Original - FPS: {self.fps:.1f}")
+            out = self.process_detection(frame, rgb, tech)
+            self._show(self.canvas_tech, out, tech)
+
             self.master.after(30, self.update_frame)
-            return
 
-        # Pré-processamento
-        frame = cv2.flip(frame, 1)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        tech = self.var_tech.get().split(" - ")[0]
-
-        # Cálculo do FPS
-        self.frame_count += 1
-        if self.frame_count % 30 == 0:
-            end_time = cv2.getTickCount()
-            self.fps = 30 / ((end_time - self.start_time) / cv2.getTickFrequency())
-            self.start_time = end_time
-
-        # Exibe frame original
-        self._show(self.canvas_orig, frame, f"Original - FPS: {self.fps:.1f}")
-
-        # Processa de acordo com a técnica selecionada
-        out = self.process_detection(frame, rgb, tech)
-
-        # Exibe resultado processado
-        self._show(self.canvas_tech, out, tech)
-
-        self.master.after(30, self.update_frame)
+        except Exception as e:
+            print(f"Erro ao capturar frame: {str(e)}")
+            self.stop_webcam()
 
     def process_detection(self, frame, rgb, tech):
-        """Aplica a técnica de detecção selecionada"""
+        """Processa a detecção selecionada"""
         out = frame.copy()
 
         try:
@@ -247,14 +312,13 @@ class MotionAppLive:
                         )
 
         except Exception as e:
-            print(f"Erro em {tech}: {e}")
+            print(f"Erro em {tech}: {str(e)}")
 
         return out
 
     def _show(self, canvas, img, title):
-        """Exibe a imagem no canvas especificado"""
+        """Exibe a imagem no canvas"""
         try:
-            # Redimensiona mantendo aspect ratio
             h, w = img.shape[:2]
             aspect = w / h
             new_h = 480
@@ -262,7 +326,6 @@ class MotionAppLive:
 
             disp = cv2.resize(img, (new_w, new_h))
 
-            # Converte para formato adequado
             if len(disp.shape) == 2 or disp.shape[2] == 1:
                 disp = cv2.cvtColor(disp, cv2.COLOR_GRAY2RGB)
             elif disp.shape[2] == 4:
@@ -270,11 +333,10 @@ class MotionAppLive:
             else:
                 disp = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
 
-            # Converte para PhotoImage e exibe
             photo = ImageTk.PhotoImage(Image.fromarray(disp))
             canvas.delete('all')
             canvas.create_image(320, 240, image=photo, anchor=CENTER)
-            canvas.image = photo  # Mantém referência
+            canvas.image = photo
             canvas.create_text(
                 320, 20,
                 text=title,
@@ -283,38 +345,31 @@ class MotionAppLive:
                 anchor=N
             )
         except Exception as e:
-            print(f"Erro ao exibir imagem: {e}")
+            print(f"Erro ao exibir imagem: {str(e)}")
 
     def cleanup(self):
-        """Libera todos os recursos antes de fechar"""
+        """Libera todos os recursos"""
+        self.is_closing = True
         self.stop_webcam()
 
-        # Fecha todos os modelos MediaPipe
-        if hasattr(self, 'hands'):
-            self.hands.close()
-        if hasattr(self, 'face_mesh'):
-            self.face_mesh.close()
-        if hasattr(self, 'pose'):
-            self.pose.close()
-        if hasattr(self, 'selfie'):
-            self.selfie.close()
-        if hasattr(self, 'objectron'):
-            self.objectron.close()
+        # Fecha os modelos MediaPipe
+        models = ['hands', 'face_mesh', 'face_det', 'pose', 'selfie', 'objectron']
+        for model in models:
+            if hasattr(self, model):
+                getattr(self, model).close()
+
+    def on_closing(self):
+        """Handler para fechamento da janela"""
+        self.cleanup()
+        self.master.destroy()
 
     def __del__(self):
-        """Destrutor - libera recursos"""
-        self.cleanup()
+        """Destrutor - apenas chama cleanup se não estiver já sendo encerrado"""
+        if not self.is_closing:
+            self.cleanup()
 
 
 if __name__ == '__main__':
     root = Tk()
     app = MotionAppLive(root)
-
-
-    def on_closing():
-        app.cleanup()
-        root.destroy()
-
-
-    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
