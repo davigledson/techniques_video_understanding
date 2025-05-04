@@ -67,7 +67,6 @@ class MotionApp:
         h, w = f1.shape
 
         if tech == "Lucas-Kanade (esparso)":
-            # Parâmetros relaxados para melhor detecção
             p0 = cv2.goodFeaturesToTrack(f1, maxCorners=200, qualityLevel=0.01, minDistance=5)
             if p0 is None:
                 messagebox.showinfo("Info", "Nenhum ponto encontrado.")
@@ -85,7 +84,8 @@ class MotionApp:
                 return
             vis = cv2.cvtColor(f1, cv2.COLOR_GRAY2BGR)
             for (x0, y0), (x1, y1) in zip(good0, good1):
-                cv2.arrowedLine(vis, (int(x0), int(y0)), (int(x1), int(y1)), (0, 255, 0), 1)
+                cv2.circle(vis, (int(x0), int(y0)), 4, (0, 255, 0), -1)  # ponto inicial
+                cv2.arrowedLine(vis, (int(x0), int(y0)), (int(x1), int(y1)), (0, 255, 0), 3, tipLength=0.3)
             self._show(self.canvas2, vis, "LK Vetores")
             self._show(self.canvas3, f2, f"Frame {self.frame_idx + 1}")
 
@@ -115,7 +115,7 @@ class MotionApp:
                                 if diff < mind:
                                     mind, best = diff, (dx, dy)
                     dx, dy = best
-                    cv2.arrowedLine(vis, (x+bs//2, y+bs//2), (x+bs//2+dx, y+bs//2+dy), (0,255,0), 1)
+                    cv2.arrowedLine(vis, (x+bs//2, y+bs//2), (x+bs//2+dx, y+bs//2+dy), (0,255,0), 2, tipLength=0.3)
             self._show(self.canvas2, vis, "Block Matching")
             self._show(self.canvas3, f2, f"Frame {self.frame_idx + 1}")
 
